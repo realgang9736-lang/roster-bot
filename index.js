@@ -2,37 +2,49 @@ const {
   Client,
   GatewayIntentBits,
   REST,
-  Routes
+  Routes,
+  Collection,
+  Events,
+  InteractionResponseFlags
 } = require("discord.js");
 
-require("dotenv").config();
 const fs = require("fs");
+require("dotenv").config();
 
 // ======================
-// CLIENT SETUP (FIX FIX FIX)
+// CLIENT SETUP
 // ======================
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
+
+client.commands = new Collection();
 
 // ======================
 // LOAD COMMANDS
 // ======================
+const commandFiles = fs
+  .readdirSync("./commands")
+  .filter(file => file.endsWith(".js"));
+
 const commands = [];
-const commandFiles = fs.readdirSync("./commands").filter(f => f.endsWith(".js"));
 
 for (const file of commandFiles) {
   const command = require(`./commands/${file}`);
+
+  if (!command.data || !command.execute) {
+    console.log(`[SKIP] ${file} missing data or execute`);
+    continue;
+  }
+
+  client.commands.set(command.data.name, command);
   commands.push(command.data.toJSON());
+
   console.log(`[LOAD] ${file}`);
 }
 
 // ======================
-// AUTO DEPLOY SLASH COMMANDS
+// DEPLOY SLASH COMMANDS
 // ======================
 async function deployCommands() {
   try {
@@ -50,14 +62,14 @@ async function deployCommands() {
 
     console.log("[SUCCESS] Slash commands deployed");
   } catch (err) {
-    console.error("[ERROR] Failed to deploy commands:", err);
+    console.error("[ERROR] Command deploy failed:", err);
   }
 }
 
 // ======================
 // READY EVENT
 // ======================
-client.once("ready", async () => {
+client.once(Events.ClientReady, async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   console.log(`Guild: ${process.env.GUILD_ID}`);
 
@@ -65,27 +77,34 @@ client.once("ready", async () => {
 });
 
 // ======================
-// INTERACTIONS HANDLER
+// INTERACTION HANDLER
 // ======================
-client.on("interactionCreate", async (interaction) => {
+client.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
 
-  const command = require(`./commands/${interaction.commandName}`);
-  if (!command) return;
+  const command = client.commands.get(interaction.commandName);
+
+  if (!command) {
+    console.log(`[WARN] Unknown command: ${interaction.commandName}`);
+    return;
+  }
 
   try {
     await command.execute(interaction);
   } catch (err) {
-    console.error(err);
+    console.error(`[ERROR] Command failed:`, err);
+
+    if (interaction.replied || interaction.deferred) return;
+
     await interaction.reply({
-      content: "❌ Error executing command",
-      ephemeral: true
+      content: "❌ Something went wrong while running this command.",
+      flags: InteractionResponseFlags.Ephemeral
     });
   }
 });
 
 // ======================
-// ERROR LOGGING
+// ERROR HANDLING
 // ======================
 client.on("error", console.error);
 client.on("warn", console.warn);
